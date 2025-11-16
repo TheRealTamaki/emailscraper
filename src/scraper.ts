@@ -231,29 +231,20 @@ export class EmailScraper {
       for (const email of uniqueEmails) {
         // Find context around the email with larger window
         const emailIndex = content.indexOf(email);
-        const contextBefore = content.substring(Math.max(0, emailIndex - 500), emailIndex);
-        const contextAfter = content.substring(emailIndex + email.length, Math.min(content.length, emailIndex + email.length + 300));
+        const contextBefore = content.substring(Math.max(0, emailIndex - 1000), emailIndex);
+        const contextAfter = content.substring(emailIndex + email.length, Math.min(content.length, emailIndex + email.length + 500));
+        const fullContext = contextBefore + email + contextAfter;
 
         // Try to extract name from context
         let name = '';
 
-        // Strategy 1: Look for lines immediately before the email
-        const linesBefore = contextBefore.split('\n').filter(line => line.trim());
-        if (linesBefore.length > 0) {
-          // Get the last non-empty line before the email
-          const lastLine = linesBefore[linesBefore.length - 1].trim();
-
-          // Remove markdown formatting (headers, bold, links, etc.)
-          const cleanLine = lastLine
-            .replace(/^#+\s*/, '') // Remove header markers
-            .replace(/\*\*/g, '') // Remove bold markers
-            .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1') // Extract link text
-            .replace(/\*/g, '') // Remove italic markers
-            .trim();
-
-          // If the cleaned line doesn't contain email-like patterns and isn't too long, use it as name
-          if (cleanLine.length > 0 && cleanLine.length < 100 && !cleanLine.includes('@') && !cleanLine.toLowerCase().includes('email')) {
-            name = cleanLine;
+        // Strategy 1 (PRIMARY): Look for H1 headers (# Name) - most common for person names
+        const h1Matches = [...fullContext.matchAll(/^#\s+(.+?)$/gm)];
+        if (h1Matches.length > 0) {
+          // Get the H1 closest to the email
+          const h1 = h1Matches[h1Matches.length - 1][1].trim();
+          if (h1.length > 0 && h1.length < 100 && !h1.includes('@')) {
+            name = h1;
           }
         }
 
@@ -268,7 +259,7 @@ export class EmailScraper {
           }
         }
 
-        // Strategy 3: Look for headers before the email
+        // Strategy 3: Look for any header before the email
         if (!name) {
           const headerMatches = [...contextBefore.matchAll(/^#+\s+(.+?)$/gm)];
           if (headerMatches.length > 0) {
@@ -279,38 +270,60 @@ export class EmailScraper {
           }
         }
 
-        // Try to extract job title
-        let jobTitle = '';
-        const fullContext = contextBefore + email + contextAfter;
+        // Strategy 4: Look for lines immediately before the email
+        if (!name) {
+          const linesBefore = contextBefore.split('\n').filter(line => line.trim());
+          if (linesBefore.length > 0) {
+            // Get the last non-empty line before the email
+            const lastLine = linesBefore[linesBefore.length - 1].trim();
 
-        // Strategy 1: Look for explicit labels
-        const labelPatterns = [
-          /(?:title|position|role|job)[\s:]+(.+?)(?:\n|$)/i,
-          /(.+?)(?:\s*[-|]\s*)?(?:title|position|role)/i,
-        ];
-
-        for (const pattern of labelPatterns) {
-          const match = fullContext.match(pattern);
-          if (match && match[1]) {
-            const cleanTitle = match[1]
-              .replace(/\*\*/g, '')
-              .replace(/\*/g, '')
-              .replace(/^#+\s*/, '')
+            // Remove markdown formatting (headers, bold, links, etc.)
+            const cleanLine = lastLine
+              .replace(/^#+\s*/, '') // Remove header markers
+              .replace(/\*\*/g, '') // Remove bold markers
+              .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1') // Extract link text
+              .replace(/\*/g, '') // Remove italic markers
               .trim();
-            if (cleanTitle && cleanTitle.toLowerCase() !== name.toLowerCase() && cleanTitle.length < 100) {
-              jobTitle = cleanTitle;
-              break;
+
+            // If the cleaned line doesn't contain email-like patterns and isn't too long, use it as name
+            if (cleanLine.length > 0 && cleanLine.length < 100 && !cleanLine.includes('@') && !cleanLine.toLowerCase().includes('email')) {
+              name = cleanLine;
             }
           }
         }
 
-        // Strategy 2: Look for ## subheaders (often used for job titles)
+        // Try to extract job title
+        let jobTitle = '';
+
+        // Strategy 1 (PRIMARY): Look for H2 headers (## Job Title) - most common for job titles
+        const h2Matches = [...fullContext.matchAll(/^##\s+(.+?)$/gm)];
+        if (h2Matches.length > 0) {
+          // Get the H2 closest to the email
+          const h2 = h2Matches[h2Matches.length - 1][1].trim();
+          if (h2 && h2.toLowerCase() !== name.toLowerCase() && h2.length < 100 && !h2.includes('@')) {
+            jobTitle = h2;
+          }
+        }
+
+        // Strategy 2: Look for explicit labels
         if (!jobTitle) {
-          const subheaderMatches = [...fullContext.matchAll(/^##\s+(.+?)$/gm)];
-          if (subheaderMatches.length > 0) {
-            const subheader = subheaderMatches[subheaderMatches.length - 1][1].trim();
-            if (subheader && subheader.toLowerCase() !== name.toLowerCase() && subheader.length < 100) {
-              jobTitle = subheader;
+          const labelPatterns = [
+            /(?:title|position|role|job)[\s:]+(.+?)(?:\n|$)/i,
+            /(.+?)(?:\s*[-|]\s*)?(?:title|position|role)/i,
+          ];
+
+          for (const pattern of labelPatterns) {
+            const match = fullContext.match(pattern);
+            if (match && match[1]) {
+              const cleanTitle = match[1]
+                .replace(/\*\*/g, '')
+                .replace(/\*/g, '')
+                .replace(/^#+\s*/, '')
+                .trim();
+              if (cleanTitle && cleanTitle.toLowerCase() !== name.toLowerCase() && cleanTitle.length < 100) {
+                jobTitle = cleanTitle;
+                break;
+              }
             }
           }
         }

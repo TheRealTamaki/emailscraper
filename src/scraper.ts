@@ -36,22 +36,72 @@ export class EmailScraper {
 
       // Extract all links from the page
       const links = result.links || [];
-      this.log(`Found ${links.length} links on the team page`);
+      this.log(`Found ${links.length} total links on the team page`);
+
+      // Get the base domain of the team page
+      const teamUrl = new URL(teamPageUrl);
+      const baseDomain = teamUrl.hostname;
 
       // Filter links that are likely profile pages
-      // This is a heuristic - adjust based on your specific site structure
       const profileUrls = links.filter((link: string) => {
-        // Common patterns for profile URLs
-        return (
-          link.includes('/team/') ||
-          link.includes('/profile/') ||
-          link.includes('/member/') ||
-          link.includes('/people/') ||
-          link.includes('/staff/')
-        );
+        try {
+          const linkUrl = new URL(link);
+
+          // Only consider links from the same domain
+          if (!linkUrl.hostname.includes(baseDomain.replace('www.', ''))) {
+            return false;
+          }
+
+          const path = linkUrl.pathname.toLowerCase();
+
+          // Common patterns for profile URLs
+          return (
+            path.includes('/agent/') ||
+            path.includes('/agents/') ||
+            path.includes('/team/') ||
+            path.includes('/teams/') ||
+            path.includes('/profile/') ||
+            path.includes('/profiles/') ||
+            path.includes('/member/') ||
+            path.includes('/members/') ||
+            path.includes('/people/') ||
+            path.includes('/person/') ||
+            path.includes('/staff/') ||
+            path.includes('/employee/') ||
+            path.includes('/our-team/') ||
+            path.includes('/our-people/') ||
+            path.includes('/our-agents/')
+          );
+        } catch (e) {
+          // Invalid URL, skip it
+          return false;
+        }
       });
 
       this.log(`Identified ${profileUrls.length} potential profile URLs`);
+
+      // Log a few examples if found
+      if (profileUrls.length > 0 && this.verbose) {
+        this.log(`Example profile URLs: ${profileUrls.slice(0, 3).join(', ')}`);
+      }
+
+      // If no profiles found, log all unique URL patterns to help debug
+      if (profileUrls.length === 0 && links.length > 0) {
+        const patterns = new Set(
+          links
+            .map((link: string) => {
+              try {
+                const url = new URL(link);
+                return url.pathname.split('/').filter(p => p).slice(0, 2).join('/');
+              } catch {
+                return null;
+              }
+            })
+            .filter(Boolean)
+        );
+        this.log(`No profile URLs found. URL patterns on page: ${Array.from(patterns).slice(0, 10).join(', ')}`);
+      }
+
       return profileUrls;
     } catch (error) {
       throw new Error(`Error extracting profile URLs: ${error instanceof Error ? error.message : String(error)}`);

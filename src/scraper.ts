@@ -229,48 +229,128 @@ export class EmailScraper {
       this.log(`Found ${uniqueEmails.length} unique emails`);
 
       for (const email of uniqueEmails) {
-        // Find context around the email
+        // Find context around the email with larger window
         const emailIndex = content.indexOf(email);
-        const contextBefore = content.substring(Math.max(0, emailIndex - 200), emailIndex);
-        const contextAfter = content.substring(emailIndex, Math.min(content.length, emailIndex + 200));
+        const contextBefore = content.substring(Math.max(0, emailIndex - 500), emailIndex);
+        const contextAfter = content.substring(emailIndex + email.length, Math.min(content.length, emailIndex + email.length + 300));
 
         // Try to extract name from context
         let name = '';
 
-        // Look for headers or bold text near the email
-        const headerMatch = contextBefore.match(/(?:^|\n)#+ (.+?)(?:\n|$)/);
-        if (headerMatch) {
-          name = headerMatch[1].trim();
+        // Strategy 1: Look for lines immediately before the email
+        const linesBefore = contextBefore.split('\n').filter(line => line.trim());
+        if (linesBefore.length > 0) {
+          // Get the last non-empty line before the email
+          const lastLine = linesBefore[linesBefore.length - 1].trim();
+
+          // Remove markdown formatting (headers, bold, links, etc.)
+          const cleanLine = lastLine
+            .replace(/^#+\s*/, '') // Remove header markers
+            .replace(/\*\*/g, '') // Remove bold markers
+            .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1') // Extract link text
+            .replace(/\*/g, '') // Remove italic markers
+            .trim();
+
+          // If the cleaned line doesn't contain email-like patterns and isn't too long, use it as name
+          if (cleanLine.length > 0 && cleanLine.length < 100 && !cleanLine.includes('@') && !cleanLine.toLowerCase().includes('email')) {
+            name = cleanLine;
+          }
         }
 
+        // Strategy 2: Look for bold text near the email
         if (!name) {
-          const boldMatch = contextBefore.match(/\*\*(.+?)\*\*/);
-          if (boldMatch) {
-            name = boldMatch[1].trim();
+          const boldMatches = [...contextBefore.matchAll(/\*\*(.+?)\*\*/g)];
+          if (boldMatches.length > 0) {
+            const lastBold = boldMatches[boldMatches.length - 1][1].trim();
+            if (lastBold.length > 0 && lastBold.length < 100 && !lastBold.includes('@')) {
+              name = lastBold;
+            }
+          }
+        }
+
+        // Strategy 3: Look for headers before the email
+        if (!name) {
+          const headerMatches = [...contextBefore.matchAll(/^#+\s+(.+?)$/gm)];
+          if (headerMatches.length > 0) {
+            const lastHeader = headerMatches[headerMatches.length - 1][1].trim();
+            if (lastHeader.length > 0 && lastHeader.length < 100 && !lastHeader.includes('@')) {
+              name = lastHeader;
+            }
           }
         }
 
         // Try to extract job title
         let jobTitle = '';
-        const titlePatterns = [
-          /(?:title|position|role):\s*(.+?)(?:\n|$)/i,
-          /##\s+(.+?)(?:\n|$)/,
+        const fullContext = contextBefore + email + contextAfter;
+
+        // Strategy 1: Look for explicit labels
+        const labelPatterns = [
+          /(?:title|position|role|job)[\s:]+(.+?)(?:\n|$)/i,
+          /(.+?)(?:\s*[-|]\s*)?(?:title|position|role)/i,
         ];
 
-        for (const pattern of titlePatterns) {
-          const match = (contextBefore + contextAfter).match(pattern);
-          if (match && match[1] && match[1].toLowerCase() !== name.toLowerCase()) {
-            jobTitle = match[1].trim();
-            break;
+        for (const pattern of labelPatterns) {
+          const match = fullContext.match(pattern);
+          if (match && match[1]) {
+            const cleanTitle = match[1]
+              .replace(/\*\*/g, '')
+              .replace(/\*/g, '')
+              .replace(/^#+\s*/, '')
+              .trim();
+            if (cleanTitle && cleanTitle.toLowerCase() !== name.toLowerCase() && cleanTitle.length < 100) {
+              jobTitle = cleanTitle;
+              break;
+            }
+          }
+        }
+
+        // Strategy 2: Look for ## subheaders (often used for job titles)
+        if (!jobTitle) {
+          const subheaderMatches = [...fullContext.matchAll(/^##\s+(.+?)$/gm)];
+          if (subheaderMatches.length > 0) {
+            const subheader = subheaderMatches[subheaderMatches.length - 1][1].trim();
+            if (subheader && subheader.toLowerCase() !== name.toLowerCase() && subheader.length < 100) {
+              jobTitle = subheader;
+            }
+          }
+        }
+
+        // Strategy 3: Look for italic text near email (sometimes used for titles)
+        if (!jobTitle) {
+          const italicMatches = [...fullContext.matchAll(/\*([^*]+?)\*/g)];
+          for (const match of italicMatches) {
+            const italic = match[1].trim();
+            if (italic && !italic.includes('@') && italic.length > 5 && italic.length < 100 && italic.toLowerCase() !== name.toLowerCase()) {
+              jobTitle = italic;
+              break;
+            }
+          }
+        }
+
+        // Strategy 4: Look for lines after the email or name
+        if (!jobTitle) {
+          const linesAfter = contextAfter.split('\n').filter(line => line.trim());
+          if (linesAfter.length > 0) {
+            const nextLine = linesAfter[0].trim()
+              .replace(/\*\*/g, '')
+              .replace(/\*/g, '')
+              .replace(/^#+\s*/, '')
+              .trim();
+
+            if (nextLine && nextLine.length > 5 && nextLine.length < 100 && !nextLine.includes('@') && nextLine.toLowerCase() !== name.toLowerCase()) {
+              jobTitle = nextLine;
+            }
           }
         }
 
         contacts.push({
           name: name || 'Unknown',
           email,
-          jobTitle,
+          jobTitle: jobTitle || '',
           profileUrl: pageUrl
         });
+
+        this.log(`Extracted: ${name || 'Unknown'} - ${email} - ${jobTitle || 'No title'}`);
       }
 
       this.log(`Extracted ${contacts.length} contacts from page`);

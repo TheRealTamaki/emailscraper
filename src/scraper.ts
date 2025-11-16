@@ -193,6 +193,100 @@ export class EmailScraper {
   }
 
   /**
+   * Scrape emails directly from a single page (Scenario 1)
+   * Extracts all emails, names, and job titles found on the page
+   */
+  public async scrapeDirectPage(pageUrl: string): Promise<ScrapeResult> {
+    const contacts: ContactInfo[] = [];
+    const errors: string[] = [];
+
+    this.log(`Scraping page directly: ${pageUrl}`);
+
+    try {
+      const result = await this.firecrawl.scrapeUrl(pageUrl, {
+        formats: ['markdown'],
+        onlyMainContent: true
+      });
+
+      if (!result.success || !result.markdown) {
+        errors.push('Failed to scrape page');
+        return { success: false, contacts: [], errors };
+      }
+
+      const content = result.markdown;
+
+      // Extract all emails from the page
+      const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/gi;
+      const emailMatches = content.match(emailRegex) || [];
+
+      if (emailMatches.length === 0) {
+        errors.push('No emails found on page');
+        return { success: false, contacts: [], errors };
+      }
+
+      // Try to extract context around each email
+      const uniqueEmails = [...new Set(emailMatches)];
+      this.log(`Found ${uniqueEmails.length} unique emails`);
+
+      for (const email of uniqueEmails) {
+        // Find context around the email
+        const emailIndex = content.indexOf(email);
+        const contextBefore = content.substring(Math.max(0, emailIndex - 200), emailIndex);
+        const contextAfter = content.substring(emailIndex, Math.min(content.length, emailIndex + 200));
+
+        // Try to extract name from context
+        let name = '';
+
+        // Look for headers or bold text near the email
+        const headerMatch = contextBefore.match(/(?:^|\n)#+ (.+?)(?:\n|$)/);
+        if (headerMatch) {
+          name = headerMatch[1].trim();
+        }
+
+        if (!name) {
+          const boldMatch = contextBefore.match(/\*\*(.+?)\*\*/);
+          if (boldMatch) {
+            name = boldMatch[1].trim();
+          }
+        }
+
+        // Try to extract job title
+        let jobTitle = '';
+        const titlePatterns = [
+          /(?:title|position|role):\s*(.+?)(?:\n|$)/i,
+          /##\s+(.+?)(?:\n|$)/,
+        ];
+
+        for (const pattern of titlePatterns) {
+          const match = (contextBefore + contextAfter).match(pattern);
+          if (match && match[1] && match[1].toLowerCase() !== name.toLowerCase()) {
+            jobTitle = match[1].trim();
+            break;
+          }
+        }
+
+        contacts.push({
+          name: name || 'Unknown',
+          email,
+          jobTitle,
+          profileUrl: pageUrl
+        });
+      }
+
+      this.log(`Extracted ${contacts.length} contacts from page`);
+
+      return {
+        success: contacts.length > 0,
+        contacts,
+        errors
+      };
+    } catch (error) {
+      errors.push(`Error scraping page: ${error instanceof Error ? error.message : String(error)}`);
+      return { success: false, contacts: [], errors };
+    }
+  }
+
+  /**
    * Scrape a single profile URL directly
    */
   public async scrapeSingleProfile(profileUrl: string): Promise<ContactInfo | null> {

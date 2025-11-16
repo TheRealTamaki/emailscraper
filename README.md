@@ -1,15 +1,17 @@
 # Email Scraper
 
-A powerful email scraper built with the Firecrawl API to extract contact information (name, email, job title) from team profile pages.
+A professional email scraper with a modern web GUI, built with the Firecrawl API to extract contact information (name, email, job title) from web pages.
 
 ## Features
 
-- Scrapes team pages and automatically discovers individual profile links
-- Extracts name, email address, and job title from each profile
-- Supports exporting results to JSON or CSV format
-- Verbose logging option for debugging
-- Rate limiting to respect server resources
-- Built with TypeScript for type safety
+- **Modern Web GUI**: Clean and professional interface for easy scraping
+- **Two Scraping Modes**:
+  - **Direct Page Scraping**: Extract all emails directly from a single page
+  - **Profile Page Scraping**: Discover team member profiles and scrape each individually
+- **API Key Input**: Securely enter your Firecrawl API key through the interface
+- **Export Options**: Download results as JSON or CSV
+- **Real-time Results**: View scraped contacts in a beautiful table
+- **Built with Modern Tech**: React, TypeScript, Express, and Tailwind CSS
 
 ## Prerequisites
 
@@ -24,70 +26,87 @@ git clone <repository-url>
 cd emailscraper
 ```
 
-2. Install dependencies:
+2. Install all dependencies (server and client):
 ```bash
 npm install
+cd client && npm install && cd ..
 ```
 
-3. Set up your environment variables:
+Or use the convenience script:
 ```bash
-cp .env.example .env
-```
-
-4. Edit `.env` and add your Firecrawl API key:
-```
-FIRECRAWL_API_KEY=your_api_key_here
+npm run install:all
 ```
 
 ## Usage
 
-### Basic Usage
+### Web GUI (Recommended)
 
-Scrape a team page and display results in the console:
+The easiest way to use the scraper is through the web interface:
+
+1. **Start the development server**:
+```bash
+npm run dev
+```
+
+This will start:
+- Backend API server on `http://localhost:3001`
+- Frontend React app on `http://localhost:3000`
+
+2. **Open your browser** and navigate to `http://localhost:3000`
+
+3. **Enter your Firecrawl API key** in the first field (get one at [firecrawl.dev](https://firecrawl.dev))
+
+4. **Choose a scraping mode**:
+   - **Direct Page Scraping**: For pages with all contact info on a single page
+   - **Profile Page Scraping**: For team pages with links to individual profiles
+
+5. **Enter the target URL** and click "Start Scraping"
+
+6. **View and export results** as JSON or CSV
+
+### CLI Usage (Optional)
+
+You can still use the command-line interface:
 
 ```bash
+# Scrape a team page
 npm run scrape https://example.com/team
-```
 
-### With Verbose Logging
-
-Get detailed information about the scraping process:
-
-```bash
+# With verbose logging
 npm run scrape https://example.com/team --verbose
-```
 
-### Export to File
-
-Save results to a JSON file:
-
-```bash
+# Export to file
 npm run scrape https://example.com/team --output results.json
 ```
 
-Save results to a CSV file:
-
+Note: For CLI usage, you need to set up a `.env` file with your API key:
 ```bash
-npm run scrape https://example.com/team --output contacts.csv
-```
-
-### Combined Options
-
-```bash
-npm run scrape https://example.com/team --verbose --output results.json
+cp .env.example .env
+# Edit .env and add: FIRECRAWL_API_KEY=your_api_key_here
 ```
 
 ## How It Works
 
-1. **Profile Discovery**: The scraper first crawls the main team page URL you provide and looks for links that match common profile URL patterns (e.g., `/team/`, `/profile/`, `/member/`, `/people/`, `/staff/`).
+### Mode 1: Direct Page Scraping
 
-2. **Data Extraction**: For each discovered profile URL, the scraper:
-   - Fetches the page content using Firecrawl
+1. Fetches the target page using Firecrawl API
+2. Extracts all email addresses from the page content
+3. Identifies names and job titles near each email
+4. Returns all contacts found on that single page
+
+**Best for**: Contact pages, about pages, or any page with all team members listed together
+
+### Mode 2: Profile Page Scraping
+
+1. **Profile Discovery**: Crawls the team page and finds links to individual profiles (e.g., URLs containing `/team/`, `/profile/`, `/member/`)
+2. **Individual Scraping**: For each profile found:
+   - Fetches the profile page content using Firecrawl
    - Extracts the person's name (from headers or bold text)
    - Finds email addresses using regex patterns
    - Identifies job titles from common patterns
+3. **Results**: Aggregates all contacts into a single table
 
-3. **Results**: The scraped data is displayed in the console and optionally saved to a file.
+**Best for**: Team pages with individual profile pages for each member
 
 ## Customization
 
@@ -123,9 +142,13 @@ new EmailScraper(config: ScraperConfig)
 
 #### Methods
 
+##### `scrapeDirectPage(pageUrl: string): Promise<ScrapeResult>`
+
+Scrapes all emails directly from a single page (Mode 1).
+
 ##### `scrape(teamPageUrl: string): Promise<ScrapeResult>`
 
-Scrapes a team page and all discovered profile pages.
+Scrapes a team page and all discovered profile pages (Mode 2).
 
 ##### `scrapeSingleProfile(profileUrl: string): Promise<ContactInfo | null>`
 
@@ -160,17 +183,21 @@ interface ScrapeResult {
 
 ## Building for Production
 
-Compile TypeScript to JavaScript:
-
+1. Build both server and client:
 ```bash
 npm run build
 ```
 
-Run the compiled version:
+This compiles:
+- TypeScript server code to `dist/`
+- React frontend to `client/dist/`
 
+2. Start the production server:
 ```bash
-npm start <url> [options]
+NODE_ENV=production npm start
 ```
+
+The server will serve the built React app and API on port 3001.
 
 ## Programmatic Usage
 

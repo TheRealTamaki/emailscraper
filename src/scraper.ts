@@ -54,24 +54,29 @@ export class EmailScraper {
 
           const path = linkUrl.pathname.toLowerCase();
 
-          // Common patterns for profile URLs
-          return (
-            path.includes('/agent/') ||
-            path.includes('/agents/') ||
-            path.includes('/team/') ||
-            path.includes('/teams/') ||
-            path.includes('/profile/') ||
-            path.includes('/profiles/') ||
-            path.includes('/member/') ||
-            path.includes('/members/') ||
-            path.includes('/people/') ||
-            path.includes('/person/') ||
-            path.includes('/staff/') ||
-            path.includes('/employee/') ||
-            path.includes('/our-team/') ||
-            path.includes('/our-people/') ||
-            path.includes('/our-agents/')
-          );
+          // Profile URL keywords - URLs containing these patterns are likely profile pages
+          const profileKeywords = [
+            '/agent/', '/agents/',
+            '/team/', '/teams/',
+            '/profile/', '/profiles/',
+            '/member/', '/members/',
+            '/people/', '/person/',
+            '/staff/', '/employee/', '/employees/',
+            '/our-team/', '/our-people/', '/our-agents/',
+            '/management/', '/managers/',
+            '/property/', '/properties/',
+            '/broker/', '/brokers/',
+            '/advisor/', '/advisors/',
+            '/consultant/', '/consultants/',
+            '/specialist/', '/specialists/',
+            '/director/', '/directors/',
+            '/executive/', '/executives/',
+            '/leadership/',
+            '/about-us/team/', '/about/team/'
+          ];
+
+          // Check if the URL contains any profile keywords
+          return profileKeywords.some(keyword => path.includes(keyword));
         } catch (e) {
           // Invalid URL, skip it
           return false;
@@ -137,12 +142,47 @@ export class EmailScraper {
         return null;
       }
 
-      // Extract name - typically in headers or first prominent text
-      const nameRegex = /^#\s+(.+)$/m;
-      const nameMatch = content.match(nameRegex);
-      let name = nameMatch ? nameMatch[1].trim() : '';
+      // Extract name - PRIORITIZE H1 headers (# Name)
+      let name = '';
+      let jobTitle = '';
 
-      // If no header found, try to find name near the email or in bold text
+      // Strategy 1 (PRIMARY): Extract name from H1 and job title from text directly underneath
+      const h1Pattern = /^#\s+(.+?)$\s*\n+(.+?)$/m;
+      const h1Match = content.match(h1Pattern);
+
+      if (h1Match) {
+        name = h1Match[1].trim();
+        // Get the first line after the H1 as potential job title
+        const potentialJobTitle = h1Match[2].trim();
+
+        // Clean up the job title (remove markdown formatting)
+        const cleanJobTitle = potentialJobTitle
+          .replace(/\*\*/g, '') // Remove bold
+          .replace(/\*/g, '')   // Remove italic
+          .replace(/^#+\s*/, '') // Remove any header markers
+          .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1') // Extract link text
+          .trim();
+
+        // Validate job title (should be different from name and not too long)
+        if (cleanJobTitle &&
+            cleanJobTitle.toLowerCase() !== name.toLowerCase() &&
+            cleanJobTitle.length < 150 &&
+            !cleanJobTitle.includes('@') &&
+            !cleanJobTitle.toLowerCase().includes('http')) {
+          jobTitle = cleanJobTitle;
+        }
+      }
+
+      // Strategy 2 (FALLBACK): If no H1 found, look for first header
+      if (!name) {
+        const anyHeaderRegex = /^#+\s+(.+)$/m;
+        const headerMatch = content.match(anyHeaderRegex);
+        if (headerMatch) {
+          name = headerMatch[1].trim();
+        }
+      }
+
+      // Strategy 3 (FALLBACK): Look for bold text near the beginning
       if (!name) {
         const boldTextRegex = /\*\*(.+?)\*\*/g;
         const boldMatches = [...content.matchAll(boldTextRegex)];
@@ -151,19 +191,20 @@ export class EmailScraper {
         }
       }
 
-      // Extract job title - common patterns
-      const jobTitlePatterns = [
-        /(?:title|position|role):\s*(.+?)(?:\n|$)/gi,
-        /##\s+(.+?)(?:\n|$)/,
-        /\*\*(.+?)\*\*\s*(?:\n|$)/
-      ];
+      // Additional job title extraction if not found yet
+      if (!jobTitle) {
+        const jobTitlePatterns = [
+          /##\s+(.+?)(?:\n|$)/,  // H2 headers often contain job titles
+          /(?:title|position|role):\s*(.+?)(?:\n|$)/i, // Explicit labels
+          /\*\*(.+?)\*\*\s*(?:\n|$)/ // Bold text (fallback)
+        ];
 
-      let jobTitle = '';
-      for (const pattern of jobTitlePatterns) {
-        const match = content.match(pattern);
-        if (match && match[1] && match[1].toLowerCase() !== name.toLowerCase()) {
-          jobTitle = match[1].trim();
-          break;
+        for (const pattern of jobTitlePatterns) {
+          const match = content.match(pattern);
+          if (match && match[1] && match[1].toLowerCase() !== name.toLowerCase()) {
+            jobTitle = match[1].trim();
+            break;
+          }
         }
       }
 

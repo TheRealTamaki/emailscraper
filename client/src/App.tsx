@@ -207,7 +207,7 @@ function App() {
             <textarea
               value={urls}
               onChange={(e) => setUrls(e.target.value)}
-              placeholder="https://example.com/team&#x0a;https://example.com/our-agents&#x0a;https://example.com/staff"
+              placeholder={`https://example.com/team\nhttps://example.com/our-agents\nhttps://example.com/staff`}
               rows={4}
               className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition resize-y"
             />

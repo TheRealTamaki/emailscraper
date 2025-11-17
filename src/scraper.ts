@@ -10,7 +10,10 @@ export class EmailScraper {
     'sales',
     'director',
     'manager',
-    'marketing'
+    'marketing',
+    'agent',
+    'principal',
+    'advisor'
   ];
 
   // Negative keywords - profiles must NOT contain any of these

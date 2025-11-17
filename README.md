@@ -1,6 +1,6 @@
 # Email Scraper
 
-A professional email scraper with a modern web GUI, built with the Firecrawl API to extract contact information (name, email, job title) from web pages.
+A professional, configurable email scraper with a modern web GUI, built with the Firecrawl API to extract contact information (name, email, job title) from web pages. **Now supports any business type** with customizable configuration presets!
 
 ## Features
 
@@ -8,6 +8,8 @@ A professional email scraper with a modern web GUI, built with the Firecrawl API
 - **Two Scraping Modes**:
   - **Direct Page Scraping**: Extract all emails directly from a single page
   - **Profile Page Scraping**: Discover team member profiles and scrape each individually
+- **Business-Agnostic Configuration**: Pre-built presets for different industries (real estate, corporate, law firms, consulting)
+- **Fully Customizable**: Override any configuration setting to match your specific needs
 - **API Key Input**: Securely enter your Firecrawl API key through the interface
 - **Export Options**: Download results as JSON or CSV
 - **Real-time Results**: View scraped contacts in a beautiful table
@@ -60,9 +62,16 @@ This will start:
    - **Direct Page Scraping**: For pages with all contact info on a single page
    - **Profile Page Scraping**: For team pages with links to individual profiles
 
-5. **Enter the target URL** and click "Start Scraping"
+5. **Select a configuration preset** (optional):
+   - **Default**: General-purpose configuration for most websites
+   - **Real Estate**: Optimized for real estate websites (Ray White, RE/MAX, etc.)
+   - **Corporate**: Optimized for corporate websites
+   - **Consulting**: Optimized for consulting/advisory firms
+   - **Law Firm**: Optimized for law firm websites
 
-6. **View and export results** as JSON or CSV
+6. **Enter the target URL** and click "Start Scraping"
+
+7. **View and export results** as JSON or CSV
 
 ### CLI Usage (Optional)
 
@@ -77,6 +86,13 @@ npm run scrape https://example.com/team --verbose
 
 # Export to file
 npm run scrape https://example.com/team --output results.json
+
+# Use a configuration preset
+npm run scrape https://raywhite.com/team --preset real-estate
+npm run scrape https://lawfirm.com/attorneys --preset law-firm
+
+# Use a custom configuration file
+npm run scrape https://example.com/team --config my-config.json
 ```
 
 Note: For CLI usage, you need to set up a `.env` file with your API key:
@@ -108,24 +124,173 @@ cp .env.example .env
 
 **Best for**: Team pages with individual profile pages for each member
 
-## Customization
+## Configuration System
 
-### Adjusting Profile URL Patterns
+The scraper is now fully configurable to work with any business type! You can use **presets** for common industries or create **custom configurations** for specific needs.
 
-If your target website uses different URL patterns for profiles, modify the `extractProfileUrls` method in `src/scraper.ts`:
+### Configuration Presets
 
-```typescript
-const profileUrls = links.filter((link: string) => {
-  return (
-    link.includes('/your-custom-pattern/') ||
-    link.includes('/another-pattern/')
-  );
-});
+Choose from pre-built configurations optimized for different industries:
+
+#### Available Presets
+
+1. **`default`** - General-purpose configuration for most websites
+   - Comprehensive URL patterns for various page types
+   - Balanced extraction strategies
+   - Works well for most team/contact pages
+
+2. **`real-estate`** - Real estate agencies (Ray White, RE/MAX, etc.)
+   - Optimized URL patterns: `/agent/`, `/property/`, `/broker/`
+   - Tuned for real estate website structures
+
+3. **`corporate`** - Corporate websites
+   - Patterns for: `/team/`, `/leadership/`, `/management/`, `/executive/`
+   - Suited for business team pages
+
+4. **`consulting`** - Consulting and advisory firms
+   - Patterns for: `/consultant/`, `/advisor/`, `/specialist/`, `/expert/`, `/partner/`
+   - Optimized for professional services firms
+
+5. **`law-firm`** - Law firms
+   - Patterns for: `/attorney/`, `/lawyer/`, `/partner/`
+   - Tailored for legal profession websites
+
+### Using Presets
+
+#### In Web GUI
+Select your desired preset from the "Configuration Preset" dropdown.
+
+#### In CLI
+```bash
+npm run scrape https://example.com/team --preset real-estate
 ```
 
-### Customizing Data Extraction
+#### Programmatically
+```typescript
+import { EmailScraper } from './scraper';
+import { getPresetConfig } from './config-presets';
 
-The extraction logic in `extractContactInfo` method can be customized to match your specific website structure. Modify the regex patterns to better match your target pages.
+const config = getPresetConfig('real-estate', 'your_api_key', true);
+const scraper = new EmailScraper(config);
+```
+
+### Custom Configuration
+
+Create a custom configuration file to override any setting:
+
+#### 1. Create a configuration file (`my-config.json`):
+
+```json
+{
+  "scrapingOptions": {
+    "profileUrlPatterns": [
+      "/custom-pattern/",
+      "/my-team-member/",
+      "/staff-profile/"
+    ],
+    "delayBetweenProfiles": 2000,
+    "contextWindowBefore": 1500,
+    "contextWindowAfter": 800
+  },
+  "validationRules": {
+    "maxNameLength": 120,
+    "maxJobTitleLength": 200
+  }
+}
+```
+
+#### 2. Use your custom configuration:
+
+**CLI:**
+```bash
+npm run scrape https://example.com/team --config my-config.json
+```
+
+**Programmatically:**
+```typescript
+import { EmailScraper } from './scraper';
+import { mergeWithDefaults } from './config-presets';
+import * as fs from 'fs';
+
+const customConfig = JSON.parse(fs.readFileSync('my-config.json', 'utf-8'));
+const config = mergeWithDefaults('your_api_key', customConfig);
+const scraper = new EmailScraper(config);
+```
+
+### Configuration Options
+
+#### Profile URL Patterns
+Control which URLs are considered profile pages:
+```json
+{
+  "scrapingOptions": {
+    "profileUrlPatterns": ["/agent/", "/team/", "/profile/"]
+  }
+}
+```
+
+#### Rate Limiting
+Adjust delays between requests:
+```json
+{
+  "scrapingOptions": {
+    "delayBetweenProfiles": 1000
+  }
+}
+```
+
+#### Context Windows
+Control how much text around emails to analyze:
+```json
+{
+  "scrapingOptions": {
+    "contextWindowBefore": 1000,
+    "contextWindowAfter": 500
+  }
+}
+```
+
+#### Domain Filtering
+Restrict or allow specific domains:
+```json
+{
+  "scrapingOptions": {
+    "sameDomainOnly": true,
+    "allowedDomains": ["example.com", "subdomain.example.com"],
+    "blockedDomains": ["spam.com"]
+  }
+}
+```
+
+#### Validation Rules
+Customize data validation:
+```json
+{
+  "validationRules": {
+    "maxNameLength": 100,
+    "maxJobTitleLength": 150,
+    "allowEmailsInNames": false,
+    "allowUrlsInNames": false,
+    "allowUrlsInTitles": false
+  }
+}
+```
+
+#### Firecrawl Options
+Configure Firecrawl behavior:
+```json
+{
+  "scrapingOptions": {
+    "firecrawlOptions": {
+      "onlyMainContent": true,
+      "formats": ["markdown"],
+      "timeout": 30000
+    }
+  }
+}
+```
+
+For complete configuration options, see `src/types.ts` and `src/config-presets.ts`.
 
 ## API Reference
 
@@ -137,8 +302,18 @@ The extraction logic in `extractContactInfo` method can be customized to match y
 new EmailScraper(config: ScraperConfig)
 ```
 
-- `config.firecrawlApiKey` (string, required): Your Firecrawl API key
-- `config.verbose` (boolean, optional): Enable verbose logging
+**Required:**
+- `config.firecrawlApiKey` (string): Your Firecrawl API key
+
+**Optional:**
+- `config.verbose` (boolean): Enable verbose logging
+- `config.emailPattern` (RegExp): Custom email extraction pattern
+- `config.namePatterns` (NameExtractionPatterns): Custom name extraction patterns
+- `config.jobTitlePatterns` (JobTitleExtractionPatterns): Custom job title patterns
+- `config.validationRules` (ValidationRules): Custom validation rules
+- `config.scrapingOptions` (ScrapingOptions): Scraping behavior options
+
+See the [Configuration System](#configuration-system) section for details.
 
 #### Methods
 
@@ -203,6 +378,8 @@ The server will serve the built React app and API on port 3001.
 
 You can also use the scraper in your own Node.js code:
 
+### Basic Usage
+
 ```typescript
 import { EmailScraper } from './scraper';
 
@@ -212,7 +389,43 @@ const scraper = new EmailScraper({
 });
 
 const result = await scraper.scrape('https://example.com/team');
+console.log(result.contacts);
+```
 
+### With Configuration Presets
+
+```typescript
+import { EmailScraper } from './scraper';
+import { getPresetConfig } from './config-presets';
+
+// Use a preset
+const config = getPresetConfig('real-estate', 'your_api_key', true);
+const scraper = new EmailScraper(config);
+
+const result = await scraper.scrape('https://raywhite.com/team');
+console.log(result.contacts);
+```
+
+### With Custom Configuration
+
+```typescript
+import { EmailScraper } from './scraper';
+import { mergeWithDefaults } from './config-presets';
+
+// Custom configuration merged with defaults
+const config = mergeWithDefaults('your_api_key', {
+  verbose: true,
+  scrapingOptions: {
+    profileUrlPatterns: ['/my-custom-pattern/'],
+    delayBetweenProfiles: 2000
+  },
+  validationRules: {
+    maxNameLength: 120
+  }
+});
+
+const scraper = new EmailScraper(config);
+const result = await scraper.scrape('https://example.com/team');
 console.log(result.contacts);
 ```
 
@@ -221,21 +434,49 @@ console.log(result.contacts);
 ### No profiles found
 
 - Check if the team page URL is correct
-- The default profile URL patterns might not match your target site
-- Use `--verbose` flag to see which links were discovered
-- Customize the profile URL patterns in `src/scraper.ts`
+- Try a different configuration preset that matches your target website type
+- The profile URL patterns might not match your target site
+  - Use `--verbose` flag to see which links were discovered
+  - Create a custom configuration with appropriate `profileUrlPatterns`
+- Example fix:
+  ```bash
+  npm run scrape https://example.com/team --preset corporate --verbose
+  ```
 
 ### Missing data fields
 
 - The website structure might be different from expected
-- Customize the regex patterns in the `extractContactInfo` method
+- Try adjusting validation rules in a custom configuration
 - Some profiles might not have all fields (email, job title, etc.)
+- Example: Increase max lengths if titles are being truncated:
+  ```json
+  {
+    "validationRules": {
+      "maxNameLength": 150,
+      "maxJobTitleLength": 200
+    }
+  }
+  ```
 
 ### Rate limiting
 
-- The scraper includes a 1-second delay between profile requests
-- If you need to adjust this, modify the delay in the scraper loop
-- Firecrawl has rate limits based on your plan
+- The scraper includes a 1-second delay between profile requests by default
+- Adjust the delay in your configuration if needed:
+  ```json
+  {
+    "scrapingOptions": {
+      "delayBetweenProfiles": 2000
+    }
+  }
+  ```
+- Note: Firecrawl has rate limits based on your plan
+
+### Wrong industry/website type
+
+- Make sure you're using the appropriate preset for your target website
+- Real estate site? Use `--preset real-estate`
+- Law firm? Use `--preset law-firm`
+- Not matching any preset? Use `--preset default` or create a custom configuration
 
 ## License
 

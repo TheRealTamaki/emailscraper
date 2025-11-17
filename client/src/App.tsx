@@ -2,10 +2,13 @@ import { useState } from 'react';
 import { Mail, Search, Download, Loader2, AlertCircle, CheckCircle2, Users, FileText } from 'lucide-react';
 import type { ContactInfo, ScrapeResult, ScrapeMode } from './types';
 
+type PresetType = 'default' | 'real-estate' | 'corporate' | 'consulting' | 'law-firm';
+
 function App() {
   const [apiKey, setApiKey] = useState('');
   const [url, setUrl] = useState('');
   const [mode, setMode] = useState<ScrapeMode>('direct');
+  const [preset, setPreset] = useState<PresetType>('default');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ScrapeResult | null>(null);
   const [error, setError] = useState<string>('');
@@ -40,7 +43,7 @@ function App() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ apiKey, url, mode }),
+        body: JSON.stringify({ apiKey, url, mode, preset }),
       });
 
       const data = await response.json();
@@ -198,6 +201,27 @@ function App() {
                 </div>
               </button>
             </div>
+          </div>
+
+          {/* Preset Selection */}
+          <div className="mb-6">
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
+              Configuration Preset
+            </label>
+            <select
+              value={preset}
+              onChange={(e) => setPreset(e.target.value as PresetType)}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition bg-white"
+            >
+              <option value="default">Default (General Purpose)</option>
+              <option value="real-estate">Real Estate (Ray White, RE/MAX, etc.)</option>
+              <option value="corporate">Corporate Websites</option>
+              <option value="consulting">Consulting/Advisory Firms</option>
+              <option value="law-firm">Law Firms</option>
+            </select>
+            <p className="mt-1 text-xs text-gray-500">
+              Choose a preset optimized for your target website type
+            </p>
           </div>
 
           {/* Error Message */}

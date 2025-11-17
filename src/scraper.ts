@@ -1,13 +1,17 @@
 import FirecrawlApp from '@mendable/firecrawl-js';
 import { ContactInfo, ScraperConfig, ScrapeResult } from './types';
+import { mergeWithDefaults } from './config-presets';
 
 export class EmailScraper {
   private firecrawl: FirecrawlApp;
+  private config: ScraperConfig;
   private verbose: boolean;
 
   constructor(config: ScraperConfig) {
-    this.firecrawl = new FirecrawlApp({ apiKey: config.firecrawlApiKey });
-    this.verbose = config.verbose || false;
+    // Merge provided config with defaults
+    this.config = mergeWithDefaults(config.firecrawlApiKey, config);
+    this.firecrawl = new FirecrawlApp({ apiKey: this.config.firecrawlApiKey });
+    this.verbose = this.config.verbose || false;
   }
 
   /**
@@ -42,40 +46,37 @@ export class EmailScraper {
       const teamUrl = new URL(teamPageUrl);
       const baseDomain = teamUrl.hostname;
 
+      // Get profile URL patterns from config
+      const profileKeywords = this.config.scrapingOptions?.profileUrlPatterns || [];
+
       // Filter links that are likely profile pages
       const profileUrls = links.filter((link: string) => {
         try {
           const linkUrl = new URL(link);
 
-          // Only consider links from the same domain
-          if (!linkUrl.hostname.includes(baseDomain.replace('www.', ''))) {
+          // Check domain filtering
+          const sameDomainOnly = this.config.scrapingOptions?.sameDomainOnly ?? true;
+          if (sameDomainOnly && !linkUrl.hostname.includes(baseDomain.replace('www.', ''))) {
             return false;
+          }
+
+          // Check allowed/blocked domains
+          const allowedDomains = this.config.scrapingOptions?.allowedDomains || [];
+          const blockedDomains = this.config.scrapingOptions?.blockedDomains || [];
+
+          if (allowedDomains.length > 0) {
+            const isAllowed = allowedDomains.some(domain => linkUrl.hostname.includes(domain));
+            if (!isAllowed) return false;
+          }
+
+          if (blockedDomains.length > 0) {
+            const isBlocked = blockedDomains.some(domain => linkUrl.hostname.includes(domain));
+            if (isBlocked) return false;
           }
 
           const path = linkUrl.pathname.toLowerCase();
 
-          // Profile URL keywords - URLs containing these patterns are likely profile pages
-          const profileKeywords = [
-            '/agent/', '/agents/',
-            '/team/', '/teams/',
-            '/profile/', '/profiles/',
-            '/member/', '/members/',
-            '/people/', '/person/',
-            '/staff/', '/employee/', '/employees/',
-            '/our-team/', '/our-people/', '/our-agents/',
-            '/management/', '/managers/',
-            '/property/', '/properties/',
-            '/broker/', '/brokers/',
-            '/advisor/', '/advisors/',
-            '/consultant/', '/consultants/',
-            '/specialist/', '/specialists/',
-            '/director/', '/directors/',
-            '/executive/', '/executives/',
-            '/leadership/',
-            '/about-us/team/', '/about/team/'
-          ];
-
-          // Check if the URL contains any profile keywords
+          // Check if the URL contains any profile keywords from config
           return profileKeywords.some(keyword => path.includes(keyword));
         } catch (e) {
           // Invalid URL, skip it
@@ -120,10 +121,12 @@ export class EmailScraper {
     this.log(`Scraping profile: ${profileUrl}`);
 
     try {
-      const result = await this.firecrawl.scrapeUrl(profileUrl, {
+      const firecrawlOptions = this.config.scrapingOptions?.firecrawlOptions || {
         formats: ['markdown'],
         onlyMainContent: true
-      });
+      };
+
+      const result = await this.firecrawl.scrapeUrl(profileUrl, firecrawlOptions);
 
       if (!result.success || !result.markdown) {
         this.log(`Failed to scrape profile: ${profileUrl}`);
@@ -132,8 +135,8 @@ export class EmailScraper {
 
       const content = result.markdown;
 
-      // Extract email using regex
-      const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/gi;
+      // Extract email using regex from config
+      const emailRegex = this.config.emailPattern || /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/gi;
       const emailMatches = content.match(emailRegex);
       const email = emailMatches ? emailMatches[0] : '';
 
@@ -142,12 +145,19 @@ export class EmailScraper {
         return null;
       }
 
-      // Extract name - PRIORITIZE H1 headers (# Name)
+      // Extract name using configured patterns
       let name = '';
       let jobTitle = '';
 
+      const validation = this.config.validationRules || {};
+      const maxNameLength = validation.maxNameLength || 100;
+      const maxJobTitleLength = validation.maxJobTitleLength || 150;
+      const allowEmailsInNames = validation.allowEmailsInNames || false;
+      const allowUrlsInNames = validation.allowUrlsInNames || false;
+      const allowUrlsInTitles = validation.allowUrlsInTitles || false;
+
       // Strategy 1 (PRIMARY): Extract name from H1 and job title from text directly underneath
-      const h1Pattern = /^#\s+(.+?)$\s*\n+(.+?)$/m;
+      const h1Pattern = this.config.namePatterns?.h1Pattern || /^#\s+(.+?)$\s*\n+(.+?)$/m;
       const h1Match = content.match(h1Pattern);
 
       if (h1Match) {
@@ -163,29 +173,27 @@ export class EmailScraper {
           .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1') // Extract link text
           .trim();
 
-        // Validate job title (should be different from name and not too long)
+        // Validate job title using config rules
         if (cleanJobTitle &&
             cleanJobTitle.toLowerCase() !== name.toLowerCase() &&
-            cleanJobTitle.length < 150 &&
-            !cleanJobTitle.includes('@') &&
-            !cleanJobTitle.toLowerCase().includes('http')) {
+            cleanJobTitle.length < maxJobTitleLength &&
+            (allowEmailsInNames || !cleanJobTitle.includes('@')) &&
+            (allowUrlsInTitles || !cleanJobTitle.toLowerCase().includes('http'))) {
           jobTitle = cleanJobTitle;
         }
       }
 
       // Strategy 2 (FALLBACK): If no H1 found, look for first header
-      if (!name) {
-        const anyHeaderRegex = /^#+\s+(.+)$/m;
-        const headerMatch = content.match(anyHeaderRegex);
+      if (!name && this.config.namePatterns?.headerPattern) {
+        const headerMatch = content.match(this.config.namePatterns.headerPattern);
         if (headerMatch) {
           name = headerMatch[1].trim();
         }
       }
 
       // Strategy 3 (FALLBACK): Look for bold text near the beginning
-      if (!name) {
-        const boldTextRegex = /\*\*(.+?)\*\*/g;
-        const boldMatches = [...content.matchAll(boldTextRegex)];
+      if (!name && this.config.namePatterns?.boldPattern) {
+        const boldMatches = [...content.matchAll(this.config.namePatterns.boldPattern)];
         if (boldMatches.length > 0) {
           name = boldMatches[0][1].trim();
         }
@@ -193,17 +201,22 @@ export class EmailScraper {
 
       // Additional job title extraction if not found yet
       if (!jobTitle) {
-        const jobTitlePatterns = [
-          /##\s+(.+?)(?:\n|$)/,  // H2 headers often contain job titles
-          /(?:title|position|role):\s*(.+?)(?:\n|$)/i, // Explicit labels
-          /\*\*(.+?)\*\*\s*(?:\n|$)/ // Bold text (fallback)
-        ];
+        // Try H2 pattern
+        if (this.config.jobTitlePatterns?.h2Pattern) {
+          const h2Match = content.match(this.config.jobTitlePatterns.h2Pattern);
+          if (h2Match && h2Match[1] && h2Match[1].toLowerCase() !== name.toLowerCase()) {
+            jobTitle = h2Match[1].trim();
+          }
+        }
 
-        for (const pattern of jobTitlePatterns) {
-          const match = content.match(pattern);
-          if (match && match[1] && match[1].toLowerCase() !== name.toLowerCase()) {
-            jobTitle = match[1].trim();
-            break;
+        // Try label patterns
+        if (!jobTitle && this.config.jobTitlePatterns?.labelPatterns) {
+          for (const pattern of this.config.jobTitlePatterns.labelPatterns) {
+            const match = content.match(pattern);
+            if (match && match[1] && match[1].toLowerCase() !== name.toLowerCase()) {
+              jobTitle = match[1].trim();
+              break;
+            }
           }
         }
       }
@@ -261,8 +274,9 @@ export class EmailScraper {
             this.log(`Successfully extracted: ${contactInfo.name} <${contactInfo.email}>`);
           }
 
-          // Add a small delay to avoid rate limiting
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          // Add delay based on config to avoid rate limiting
+          const delay = this.config.scrapingOptions?.delayBetweenProfiles || 1000;
+          await new Promise(resolve => setTimeout(resolve, delay));
         } catch (error) {
           const errorMsg = `Error scraping ${profileUrl}: ${error instanceof Error ? error.message : String(error)}`;
           errors.push(errorMsg);
@@ -294,10 +308,12 @@ export class EmailScraper {
     this.log(`Scraping page directly: ${pageUrl}`);
 
     try {
-      const result = await this.firecrawl.scrapeUrl(pageUrl, {
+      const firecrawlOptions = this.config.scrapingOptions?.firecrawlOptions || {
         formats: ['markdown'],
         onlyMainContent: true
-      });
+      };
+
+      const result = await this.firecrawl.scrapeUrl(pageUrl, firecrawlOptions);
 
       if (!result.success || !result.markdown) {
         errors.push('Failed to scrape page');
@@ -306,8 +322,8 @@ export class EmailScraper {
 
       const content = result.markdown;
 
-      // Extract all emails from the page
-      const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/gi;
+      // Extract all emails from the page using config pattern
+      const emailRegex = this.config.emailPattern || /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/gi;
       const emailMatches = content.match(emailRegex) || [];
 
       if (emailMatches.length === 0) {
@@ -319,43 +335,50 @@ export class EmailScraper {
       const uniqueEmails = [...new Set(emailMatches)];
       this.log(`Found ${uniqueEmails.length} unique emails`);
 
+      const contextWindowBefore = this.config.scrapingOptions?.contextWindowBefore || 1000;
+      const contextWindowAfter = this.config.scrapingOptions?.contextWindowAfter || 500;
+      const validation = this.config.validationRules || {};
+      const maxNameLength = validation.maxNameLength || 100;
+
       for (const email of uniqueEmails) {
-        // Find context around the email with larger window
+        // Find context around the email with configurable window sizes
         const emailIndex = content.indexOf(email);
-        const contextBefore = content.substring(Math.max(0, emailIndex - 1000), emailIndex);
-        const contextAfter = content.substring(emailIndex + email.length, Math.min(content.length, emailIndex + email.length + 500));
+        const contextBefore = content.substring(Math.max(0, emailIndex - contextWindowBefore), emailIndex);
+        const contextAfter = content.substring(emailIndex + email.length, Math.min(content.length, emailIndex + email.length + contextWindowAfter));
         const fullContext = contextBefore + email + contextAfter;
 
         // Try to extract name from context
         let name = '';
 
-        // Strategy 1 (PRIMARY): Look for H1 headers (# Name) - most common for person names
-        const h1Matches = [...fullContext.matchAll(/^#\s+(.+?)$/gm)];
-        if (h1Matches.length > 0) {
-          // Get the H1 closest to the email
-          const h1 = h1Matches[h1Matches.length - 1][1].trim();
-          if (h1.length > 0 && h1.length < 100 && !h1.includes('@')) {
-            name = h1;
+        // Strategy 1 (PRIMARY): Look for H1 headers - use config pattern
+        if (this.config.namePatterns?.h1Pattern) {
+          const h1Matches = [...fullContext.matchAll(new RegExp(this.config.namePatterns.h1Pattern.source, 'gm'))];
+          if (h1Matches.length > 0) {
+            // Get the H1 closest to the email
+            const h1 = h1Matches[h1Matches.length - 1][1].trim();
+            if (h1.length > 0 && h1.length < maxNameLength && !h1.includes('@')) {
+              name = h1;
+            }
           }
         }
 
         // Strategy 2: Look for bold text near the email
-        if (!name) {
-          const boldMatches = [...contextBefore.matchAll(/\*\*(.+?)\*\*/g)];
+        if (!name && this.config.namePatterns?.boldPattern) {
+          const boldMatches = [...contextBefore.matchAll(this.config.namePatterns.boldPattern)];
           if (boldMatches.length > 0) {
             const lastBold = boldMatches[boldMatches.length - 1][1].trim();
-            if (lastBold.length > 0 && lastBold.length < 100 && !lastBold.includes('@')) {
+            if (lastBold.length > 0 && lastBold.length < maxNameLength && !lastBold.includes('@')) {
               name = lastBold;
             }
           }
         }
 
         // Strategy 3: Look for any header before the email
-        if (!name) {
-          const headerMatches = [...contextBefore.matchAll(/^#+\s+(.+?)$/gm)];
+        if (!name && this.config.namePatterns?.headerPattern) {
+          const headerMatches = [...contextBefore.matchAll(new RegExp(this.config.namePatterns.headerPattern.source, 'gm'))];
           if (headerMatches.length > 0) {
             const lastHeader = headerMatches[headerMatches.length - 1][1].trim();
-            if (lastHeader.length > 0 && lastHeader.length < 100 && !lastHeader.includes('@')) {
+            if (lastHeader.length > 0 && lastHeader.length < maxNameLength && !lastHeader.includes('@')) {
               name = lastHeader;
             }
           }
@@ -377,33 +400,31 @@ export class EmailScraper {
               .trim();
 
             // If the cleaned line doesn't contain email-like patterns and isn't too long, use it as name
-            if (cleanLine.length > 0 && cleanLine.length < 100 && !cleanLine.includes('@') && !cleanLine.toLowerCase().includes('email')) {
+            if (cleanLine.length > 0 && cleanLine.length < maxNameLength && !cleanLine.includes('@') && !cleanLine.toLowerCase().includes('email')) {
               name = cleanLine;
             }
           }
         }
 
-        // Try to extract job title
+        // Try to extract job title using config patterns
         let jobTitle = '';
+        const maxJobTitleLength = validation.maxJobTitleLength || 150;
 
-        // Strategy 1 (PRIMARY): Look for H2 headers (## Job Title) - most common for job titles
-        const h2Matches = [...fullContext.matchAll(/^##\s+(.+?)$/gm)];
-        if (h2Matches.length > 0) {
-          // Get the H2 closest to the email
-          const h2 = h2Matches[h2Matches.length - 1][1].trim();
-          if (h2 && h2.toLowerCase() !== name.toLowerCase() && h2.length < 100 && !h2.includes('@')) {
-            jobTitle = h2;
+        // Strategy 1 (PRIMARY): Look for H2 headers
+        if (this.config.jobTitlePatterns?.h2Pattern) {
+          const h2Matches = [...fullContext.matchAll(new RegExp(this.config.jobTitlePatterns.h2Pattern.source, 'gm'))];
+          if (h2Matches.length > 0) {
+            // Get the H2 closest to the email
+            const h2 = h2Matches[h2Matches.length - 1][1].trim();
+            if (h2 && h2.toLowerCase() !== name.toLowerCase() && h2.length < maxJobTitleLength && !h2.includes('@')) {
+              jobTitle = h2;
+            }
           }
         }
 
-        // Strategy 2: Look for explicit labels
-        if (!jobTitle) {
-          const labelPatterns = [
-            /(?:title|position|role|job)[\s:]+(.+?)(?:\n|$)/i,
-            /(.+?)(?:\s*[-|]\s*)?(?:title|position|role)/i,
-          ];
-
-          for (const pattern of labelPatterns) {
+        // Strategy 2: Look for explicit labels from config
+        if (!jobTitle && this.config.jobTitlePatterns?.labelPatterns) {
+          for (const pattern of this.config.jobTitlePatterns.labelPatterns) {
             const match = fullContext.match(pattern);
             if (match && match[1]) {
               const cleanTitle = match[1]
@@ -411,7 +432,7 @@ export class EmailScraper {
                 .replace(/\*/g, '')
                 .replace(/^#+\s*/, '')
                 .trim();
-              if (cleanTitle && cleanTitle.toLowerCase() !== name.toLowerCase() && cleanTitle.length < 100) {
+              if (cleanTitle && cleanTitle.toLowerCase() !== name.toLowerCase() && cleanTitle.length < maxJobTitleLength) {
                 jobTitle = cleanTitle;
                 break;
               }
@@ -420,11 +441,11 @@ export class EmailScraper {
         }
 
         // Strategy 3: Look for italic text near email (sometimes used for titles)
-        if (!jobTitle) {
-          const italicMatches = [...fullContext.matchAll(/\*([^*]+?)\*/g)];
+        if (!jobTitle && this.config.jobTitlePatterns?.italicPattern) {
+          const italicMatches = [...fullContext.matchAll(this.config.jobTitlePatterns.italicPattern)];
           for (const match of italicMatches) {
             const italic = match[1].trim();
-            if (italic && !italic.includes('@') && italic.length > 5 && italic.length < 100 && italic.toLowerCase() !== name.toLowerCase()) {
+            if (italic && !italic.includes('@') && italic.length > 5 && italic.length < maxJobTitleLength && italic.toLowerCase() !== name.toLowerCase()) {
               jobTitle = italic;
               break;
             }
@@ -441,7 +462,7 @@ export class EmailScraper {
               .replace(/^#+\s*/, '')
               .trim();
 
-            if (nextLine && nextLine.length > 5 && nextLine.length < 100 && !nextLine.includes('@') && nextLine.toLowerCase() !== name.toLowerCase()) {
+            if (nextLine && nextLine.length > 5 && nextLine.length < maxJobTitleLength && !nextLine.includes('@') && nextLine.toLowerCase() !== name.toLowerCase()) {
               jobTitle = nextLine;
             }
           }
@@ -495,8 +516,9 @@ export class EmailScraper {
           this.log(`Successfully extracted: ${contactInfo.name} <${contactInfo.email}>`);
         }
 
-        // Add a small delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Add delay based on config to avoid rate limiting
+        const delay = this.config.scrapingOptions?.delayBetweenProfiles || 1000;
+        await new Promise(resolve => setTimeout(resolve, delay));
       } catch (error) {
         const errorMsg = `Error scraping ${profileUrl}: ${error instanceof Error ? error.message : String(error)}`;
         errors.push(errorMsg);

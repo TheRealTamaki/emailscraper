@@ -2,7 +2,8 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import path from 'path';
 import { EmailScraper } from './scraper';
-import { ScrapeResult } from './types';
+import { ScrapeResult, ScraperConfig } from './types';
+import { getPresetConfig, PresetType, mergeWithDefaults } from './config-presets';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -21,12 +22,14 @@ interface ScrapeRequest {
   apiKey: string;
   url: string;
   mode: 'direct' | 'profiles';
+  preset?: PresetType;
+  customConfig?: Partial<ScraperConfig>;
 }
 
 // API Routes
 app.post('/api/scrape', async (req: Request, res: Response) => {
   try {
-    const { apiKey, url, mode }: ScrapeRequest = req.body;
+    const { apiKey, url, mode, preset, customConfig }: ScrapeRequest = req.body;
 
     // Validate input
     if (!apiKey) {
@@ -48,11 +51,22 @@ app.post('/api/scrape', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid URL format' });
     }
 
-    // Create scraper instance with the provided API key
-    const scraper = new EmailScraper({
-      firecrawlApiKey: apiKey,
-      verbose: false
-    });
+    // Create scraper configuration
+    let config: ScraperConfig;
+
+    if (customConfig) {
+      // Use custom configuration merged with defaults
+      config = mergeWithDefaults(apiKey, { ...customConfig, verbose: false });
+    } else if (preset) {
+      // Use preset configuration
+      config = getPresetConfig(preset, apiKey, false);
+    } else {
+      // Use default configuration
+      config = getPresetConfig('default', apiKey, false);
+    }
+
+    // Create scraper instance with configuration
+    const scraper = new EmailScraper(config);
 
     let result: ScrapeResult;
 

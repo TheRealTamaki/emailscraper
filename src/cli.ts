@@ -4,6 +4,8 @@ import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as path from 'path';
 import { EmailScraper } from './scraper';
+import { getPresetConfig, PresetType, mergeWithDefaults } from './config-presets';
+import { ScraperConfig } from './types';
 
 // Load environment variables
 dotenv.config();
@@ -29,6 +31,8 @@ async function main() {
   // Parse command line arguments
   const verbose = args.includes('--verbose') || args.includes('-v');
   const outputFile = getArgValue(args, '--output', '-o');
+  const preset = getArgValue(args, '--preset', '-p') as PresetType || 'default';
+  const configFile = getArgValue(args, '--config', '-c');
 
   // Get the URL (first non-flag argument)
   const url = args.find(arg => !arg.startsWith('-'));
@@ -47,11 +51,31 @@ async function main() {
     process.exit(1);
   }
 
-  // Create scraper instance
-  const scraper = new EmailScraper({
-    firecrawlApiKey: apiKey,
-    verbose
-  });
+  // Create scraper configuration
+  let config: ScraperConfig;
+
+  if (configFile) {
+    // Load custom configuration from file
+    try {
+      const configPath = path.resolve(process.cwd(), configFile);
+      const configContent = fs.readFileSync(configPath, 'utf-8');
+      const customConfig = JSON.parse(configContent);
+      config = mergeWithDefaults(apiKey, { ...customConfig, verbose });
+      console.log(`Using custom configuration from: ${configFile}`);
+    } catch (error) {
+      console.error(`Error loading config file: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+  } else {
+    // Use preset configuration
+    config = getPresetConfig(preset, apiKey, verbose);
+    if (preset !== 'default') {
+      console.log(`Using preset: ${preset}`);
+    }
+  }
+
+  // Create scraper instance with configuration
+  const scraper = new EmailScraper(config);
 
   console.log('Starting email scraper...');
   console.log(`Target URL: ${url}\n`);
@@ -145,27 +169,43 @@ Usage:
   npm run scrape <url> [options]
 
 Arguments:
-  <url>                 URL of the team page to scrape
+  <url>                    URL of the team page to scrape
 
 Options:
-  -v, --verbose         Enable verbose logging
-  -o, --output <file>   Save results to a file (supports .json and .csv)
-  -h, --help            Display this help message
+  -v, --verbose            Enable verbose logging
+  -o, --output <file>      Save results to a file (supports .json and .csv)
+  -p, --preset <type>      Use a configuration preset (default, real-estate, corporate, consulting, law-firm)
+  -c, --config <file>      Load custom configuration from JSON file
+  -h, --help               Display this help message
+
+Configuration Presets:
+  default                  General-purpose configuration for most websites
+  real-estate              Optimized for real estate websites (Ray White, RE/MAX, etc.)
+  corporate                Optimized for corporate websites
+  consulting               Optimized for consulting/advisory firms
+  law-firm                 Optimized for law firm websites
 
 Examples:
   npm run scrape https://example.com/team
   npm run scrape https://example.com/team --verbose
   npm run scrape https://example.com/team --output results.json
   npm run scrape https://example.com/team -o results.csv -v
+  npm run scrape https://raywhite.com/team --preset real-estate
+  npm run scrape https://lawfirm.com/attorneys --preset law-firm
+  npm run scrape https://example.com/team --config my-config.json
 
 Environment Variables:
-  FIRECRAWL_API_KEY    Your Firecrawl API key (required)
-                       Get one at https://firecrawl.dev
+  FIRECRAWL_API_KEY       Your Firecrawl API key (required)
+                          Get one at https://firecrawl.dev
 
 Setup:
   1. Copy .env.example to .env
   2. Add your Firecrawl API key to .env
   3. Run: npm run scrape <url>
+
+Custom Configuration:
+  You can create a custom configuration JSON file to override default settings.
+  See the documentation for available configuration options.
 `);
 }
 

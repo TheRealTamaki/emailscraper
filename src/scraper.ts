@@ -4,12 +4,22 @@ import { ContactInfo, ScraperConfig, ScrapeResult } from './types';
 export class EmailScraper {
   private firecrawl: FirecrawlApp;
   private verbose: boolean;
-  private allowedRoles: string[] = [
-    'sales agent',
-    'sales executive',
-    'property manager',
-    'general manager',
-    'director'
+
+  // Positive keywords - profiles MUST contain at least one of these
+  private positiveKeywords: string[] = [
+    'sales',
+    'director',
+    'manager',
+    'marketing'
+  ];
+
+  // Negative keywords - profiles must NOT contain any of these
+  private negativeKeywords: string[] = [
+    'admin',
+    'assistant',
+    'operations',
+    'client',
+    'strata'
   ];
 
   constructor(config: ScraperConfig) {
@@ -27,21 +37,35 @@ export class EmailScraper {
   }
 
   /**
-   * Checks if a job title matches one of the allowed roles
+   * Checks if text matches the keyword criteria
+   * Must contain at least one positive keyword AND no negative keywords
    */
-  private isAllowedRole(jobTitle: string): boolean {
-    if (!jobTitle) {
+  private matchesKeywords(text: string): boolean {
+    if (!text) {
       return false;
     }
 
-    const normalizedTitle = jobTitle.toLowerCase().trim();
+    const normalizedText = text.toLowerCase().trim();
 
-    // Check if the job title contains any of the allowed roles
-    return this.allowedRoles.some(role => normalizedTitle.includes(role));
+    // Check for negative keywords first (immediate disqualification)
+    const hasNegativeKeyword = this.negativeKeywords.some(keyword =>
+      normalizedText.includes(keyword)
+    );
+
+    if (hasNegativeKeyword) {
+      return false;
+    }
+
+    // Check for at least one positive keyword
+    const hasPositiveKeyword = this.positiveKeywords.some(keyword =>
+      normalizedText.includes(keyword)
+    );
+
+    return hasPositiveKeyword;
   }
 
   /**
-   * Extracts profile URLs from the main team page
+   * Extracts profile URLs from the main team page and filters by keywords BEFORE scraping
    */
   private async extractProfileUrls(teamPageUrl: string): Promise<string[]> {
     this.log(`Scraping team page: ${teamPageUrl}`);
@@ -55,16 +79,17 @@ export class EmailScraper {
         throw new Error('Failed to scrape team page');
       }
 
-      // Extract all links from the page
+      // Extract all links and markdown content
       const links = result.links || [];
+      const markdown = result.markdown || '';
       this.log(`Found ${links.length} total links on the team page`);
 
       // Get the base domain of the team page
       const teamUrl = new URL(teamPageUrl);
       const baseDomain = teamUrl.hostname;
 
-      // Filter links that are likely profile pages
-      const profileUrls = links.filter((link: string) => {
+      // Find links that match profile patterns
+      const candidateUrls = links.filter((link: string) => {
         try {
           const linkUrl = new URL(link);
 
@@ -94,36 +119,46 @@ export class EmailScraper {
             path.includes('/our-agents/')
           );
         } catch (e) {
-          // Invalid URL, skip it
           return false;
         }
       });
 
-      this.log(`Identified ${profileUrls.length} potential profile URLs`);
+      this.log(`Found ${candidateUrls.length} candidate profile URLs`);
+
+      // Now filter by keywords - extract context around each link in the markdown
+      const filteredUrls: string[] = [];
+
+      for (const url of candidateUrls) {
+        // Find this URL in the markdown and extract surrounding text
+        const urlPattern = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // Escape special chars
+        const contextRegex = new RegExp(`.{0,200}${urlPattern}.{0,200}`, 'i');
+        const contextMatch = markdown.match(contextRegex);
+
+        if (contextMatch) {
+          const context = contextMatch[0];
+
+          // Check if the context around this URL contains our keywords
+          if (this.matchesKeywords(context)) {
+            filteredUrls.push(url);
+            this.log(`✓ Including profile (keyword match): ${url}`);
+          } else {
+            this.log(`✗ Skipping profile (no keyword match): ${url}`);
+          }
+        } else {
+          // If we can't find context, include it to be safe (rare case)
+          filteredUrls.push(url);
+          this.log(`? Including profile (no context found): ${url}`);
+        }
+      }
+
+      this.log(`After keyword filtering: ${filteredUrls.length} profiles to scrape (saved ${candidateUrls.length - filteredUrls.length} API calls)`);
 
       // Log a few examples if found
-      if (profileUrls.length > 0 && this.verbose) {
-        this.log(`Example profile URLs: ${profileUrls.slice(0, 3).join(', ')}`);
+      if (filteredUrls.length > 0 && this.verbose) {
+        this.log(`Example filtered URLs: ${filteredUrls.slice(0, 3).join(', ')}`);
       }
 
-      // If no profiles found, log all unique URL patterns to help debug
-      if (profileUrls.length === 0 && links.length > 0) {
-        const patterns = new Set(
-          links
-            .map((link: string) => {
-              try {
-                const url = new URL(link);
-                return url.pathname.split('/').filter(p => p).slice(0, 2).join('/');
-              } catch {
-                return null;
-              }
-            })
-            .filter(Boolean)
-        );
-        this.log(`No profile URLs found. URL patterns on page: ${Array.from(patterns).slice(0, 10).join(', ')}`);
-      }
-
-      return profileUrls;
+      return filteredUrls;
     } catch (error) {
       throw new Error(`Error extracting profile URLs: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -237,12 +272,12 @@ export class EmailScraper {
           const contactInfo = await this.extractContactInfo(profileUrl);
 
           if (contactInfo) {
-            // Filter by allowed roles
-            if (this.isAllowedRole(contactInfo.jobTitle)) {
+            // Double-check with keyword filter (backup in case team page didn't have job title)
+            if (this.matchesKeywords(contactInfo.jobTitle)) {
               contacts.push(contactInfo);
               this.log(`Successfully extracted: ${contactInfo.name} <${contactInfo.email}> - ${contactInfo.jobTitle}`);
             } else {
-              this.log(`Skipping ${contactInfo.name} - role "${contactInfo.jobTitle}" not in allowed list`);
+              this.log(`Skipping ${contactInfo.name} - role "${contactInfo.jobTitle}" doesn't match keywords`);
             }
           }
 
@@ -439,12 +474,12 @@ export class EmailScraper {
           profileUrl: pageUrl
         };
 
-        // Filter by allowed roles
-        if (this.isAllowedRole(jobTitle)) {
+        // Filter by keywords
+        if (this.matchesKeywords(jobTitle)) {
           contacts.push(contact);
           this.log(`Extracted: ${name || 'Unknown'} - ${email} - ${jobTitle || 'No title'}`);
         } else {
-          this.log(`Skipping ${name || 'Unknown'} - role "${jobTitle || 'No title'}" not in allowed list`);
+          this.log(`Skipping ${name || 'Unknown'} - role "${jobTitle || 'No title'}" doesn't match keywords`);
         }
       }
 
@@ -482,12 +517,12 @@ export class EmailScraper {
         const contactInfo = await this.extractContactInfo(profileUrl);
 
         if (contactInfo) {
-          // Filter by allowed roles
-          if (this.isAllowedRole(contactInfo.jobTitle)) {
+          // Filter by keywords
+          if (this.matchesKeywords(contactInfo.jobTitle)) {
             contacts.push(contactInfo);
             this.log(`Successfully extracted: ${contactInfo.name} <${contactInfo.email}> - ${contactInfo.jobTitle}`);
           } else {
-            this.log(`Skipping ${contactInfo.name} - role "${contactInfo.jobTitle}" not in allowed list`);
+            this.log(`Skipping ${contactInfo.name} - role "${contactInfo.jobTitle}" doesn't match keywords`);
           }
         }
 

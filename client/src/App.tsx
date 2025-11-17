@@ -1,14 +1,17 @@
 import { useState } from 'react';
-import { Mail, Search, Download, Loader2, AlertCircle, CheckCircle2, Users, FileText } from 'lucide-react';
+import { Mail, Search, Download, Loader2, AlertCircle, CheckCircle2, Users, FileText, Copy } from 'lucide-react';
 import type { ContactInfo, ScrapeResult, ScrapeMode } from './types';
 
 function App() {
   const [apiKey, setApiKey] = useState('');
-  const [url, setUrl] = useState('');
+  const [urls, setUrls] = useState('');
   const [mode, setMode] = useState<ScrapeMode>('direct');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ScrapeResult | null>(null);
   const [error, setError] = useState<string>('');
+  const [currentUrlIndex, setCurrentUrlIndex] = useState(0);
+  const [totalUrls, setTotalUrls] = useState(0);
+  const [copySuccess, setCopySuccess] = useState(false);
 
   const handleScrape = async () => {
     // Validate inputs
@@ -17,43 +20,79 @@ function App() {
       return;
     }
 
-    if (!url.trim()) {
-      setError('Please enter a URL to scrape');
+    if (!urls.trim()) {
+      setError('Please enter at least one URL to scrape');
       return;
     }
 
-    // Validate URL format
-    try {
-      new URL(url);
-    } catch {
-      setError('Please enter a valid URL');
+    // Parse URLs (one per line)
+    const urlList = urls.split('\n').map(u => u.trim()).filter(u => u.length > 0);
+
+    if (urlList.length === 0) {
+      setError('Please enter at least one URL to scrape');
       return;
+    }
+
+    // Validate URL formats
+    for (const url of urlList) {
+      try {
+        new URL(url);
+      } catch {
+        setError(`Invalid URL: ${url}`);
+        return;
+      }
     }
 
     setError('');
     setLoading(true);
     setResult(null);
+    setTotalUrls(urlList.length);
+
+    const allContacts: ContactInfo[] = [];
+    const allErrors: string[] = [];
 
     try {
-      const response = await fetch('/api/scrape', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ apiKey, url, mode }),
-      });
+      // Scrape each URL sequentially
+      for (let i = 0; i < urlList.length; i++) {
+        const url = urlList[i];
+        setCurrentUrlIndex(i + 1);
 
-      const data = await response.json();
+        try {
+          const response = await fetch('/api/scrape', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ apiKey, url, mode }),
+          });
 
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to scrape');
+          const data = await response.json();
+
+          if (!response.ok) {
+            allErrors.push(`${url}: ${data.error || 'Failed to scrape'}`);
+          } else {
+            // Merge contacts from this URL
+            allContacts.push(...data.contacts);
+            if (data.errors && data.errors.length > 0) {
+              allErrors.push(...data.errors.map((err: string) => `${url}: ${err}`));
+            }
+          }
+        } catch (err) {
+          allErrors.push(`${url}: ${err instanceof Error ? err.message : 'An error occurred'}`);
+        }
       }
 
-      setResult(data);
+      setResult({
+        success: allContacts.length > 0,
+        contacts: allContacts,
+        errors: allErrors
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
       setLoading(false);
+      setCurrentUrlIndex(0);
+      setTotalUrls(0);
     }
   };
 
@@ -93,6 +132,32 @@ function App() {
     link.download = 'contacts.csv';
     link.click();
     URL.revokeObjectURL(url);
+  };
+
+  const copyToClipboard = async () => {
+    if (!result || result.contacts.length === 0) return;
+
+    // Create tab-separated values format (perfect for Excel)
+    const headers = ['Name', 'Email', 'Job Title', 'Profile URL'];
+    const rows = result.contacts.map(c => [
+      c.name,
+      c.email,
+      c.jobTitle || '',
+      c.profileUrl
+    ]);
+
+    const tsv = [
+      headers.join('\t'),
+      ...rows.map(row => row.join('\t'))
+    ].join('\n');
+
+    try {
+      await navigator.clipboard.writeText(tsv);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
   };
 
   return (
@@ -137,15 +202,18 @@ function App() {
           {/* URL Input */}
           <div className="mb-6">
             <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Target URL
+              Target URLs (one per line)
             </label>
-            <input
-              type="url"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://example.com/team"
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
+            <textarea
+              value={urls}
+              onChange={(e) => setUrls(e.target.value)}
+              placeholder="https://example.com/team&#x0a;https://example.com/our-agents&#x0a;https://example.com/staff"
+              rows={4}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition resize-y"
             />
+            <p className="mt-1 text-xs text-gray-500">
+              Enter one URL per line. URLs will be scraped sequentially.
+            </p>
           </div>
 
           {/* Mode Selection */}
@@ -217,7 +285,7 @@ function App() {
             {loading ? (
               <>
                 <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                Scraping...
+                {totalUrls > 1 ? `Scraping URL ${currentUrlIndex} of ${totalUrls}...` : 'Scraping...'}
               </>
             ) : (
               <>
@@ -242,6 +310,17 @@ function App() {
 
               {result.contacts.length > 0 && (
                 <div className="flex gap-2">
+                  <button
+                    onClick={copyToClipboard}
+                    className={`px-4 py-2 rounded-lg transition flex items-center text-sm font-medium ${
+                      copySuccess
+                        ? 'bg-green-100 text-green-700'
+                        : 'bg-purple-100 text-purple-700 hover:bg-purple-200'
+                    }`}
+                  >
+                    <Copy className="w-4 h-4 mr-2" />
+                    {copySuccess ? 'Copied!' : 'Copy for Excel'}
+                  </button>
                   <button
                     onClick={exportToJSON}
                     className="px-4 py-2 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 transition flex items-center text-sm font-medium"

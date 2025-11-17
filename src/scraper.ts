@@ -4,6 +4,13 @@ import { ContactInfo, ScraperConfig, ScrapeResult } from './types';
 export class EmailScraper {
   private firecrawl: FirecrawlApp;
   private verbose: boolean;
+  private allowedRoles: string[] = [
+    'sales agent',
+    'sales executive',
+    'property manager',
+    'general manager',
+    'director'
+  ];
 
   constructor(config: ScraperConfig) {
     this.firecrawl = new FirecrawlApp({ apiKey: config.firecrawlApiKey });
@@ -17,6 +24,20 @@ export class EmailScraper {
     if (this.verbose) {
       console.log(`[EmailScraper] ${message}`);
     }
+  }
+
+  /**
+   * Checks if a job title matches one of the allowed roles
+   */
+  private isAllowedRole(jobTitle: string): boolean {
+    if (!jobTitle) {
+      return false;
+    }
+
+    const normalizedTitle = jobTitle.toLowerCase().trim();
+
+    // Check if the job title contains any of the allowed roles
+    return this.allowedRoles.some(role => normalizedTitle.includes(role));
   }
 
   /**
@@ -216,8 +237,13 @@ export class EmailScraper {
           const contactInfo = await this.extractContactInfo(profileUrl);
 
           if (contactInfo) {
-            contacts.push(contactInfo);
-            this.log(`Successfully extracted: ${contactInfo.name} <${contactInfo.email}>`);
+            // Filter by allowed roles
+            if (this.isAllowedRole(contactInfo.jobTitle)) {
+              contacts.push(contactInfo);
+              this.log(`Successfully extracted: ${contactInfo.name} <${contactInfo.email}> - ${contactInfo.jobTitle}`);
+            } else {
+              this.log(`Skipping ${contactInfo.name} - role "${contactInfo.jobTitle}" not in allowed list`);
+            }
           }
 
           // Add a small delay to avoid rate limiting
@@ -406,14 +432,20 @@ export class EmailScraper {
           }
         }
 
-        contacts.push({
+        const contact = {
           name: name || 'Unknown',
           email,
           jobTitle: jobTitle || '',
           profileUrl: pageUrl
-        });
+        };
 
-        this.log(`Extracted: ${name || 'Unknown'} - ${email} - ${jobTitle || 'No title'}`);
+        // Filter by allowed roles
+        if (this.isAllowedRole(jobTitle)) {
+          contacts.push(contact);
+          this.log(`Extracted: ${name || 'Unknown'} - ${email} - ${jobTitle || 'No title'}`);
+        } else {
+          this.log(`Skipping ${name || 'Unknown'} - role "${jobTitle || 'No title'}" not in allowed list`);
+        }
       }
 
       this.log(`Extracted ${contacts.length} contacts from page`);
@@ -450,8 +482,13 @@ export class EmailScraper {
         const contactInfo = await this.extractContactInfo(profileUrl);
 
         if (contactInfo) {
-          contacts.push(contactInfo);
-          this.log(`Successfully extracted: ${contactInfo.name} <${contactInfo.email}>`);
+          // Filter by allowed roles
+          if (this.isAllowedRole(contactInfo.jobTitle)) {
+            contacts.push(contactInfo);
+            this.log(`Successfully extracted: ${contactInfo.name} <${contactInfo.email}> - ${contactInfo.jobTitle}`);
+          } else {
+            this.log(`Skipping ${contactInfo.name} - role "${contactInfo.jobTitle}" not in allowed list`);
+          }
         }
 
         // Add a small delay to avoid rate limiting

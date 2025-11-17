@@ -70,7 +70,9 @@ export class EmailScraper {
             path.includes('/employee/') ||
             path.includes('/our-team/') ||
             path.includes('/our-people/') ||
-            path.includes('/our-agents/')
+            path.includes('/our-agents/') ||
+            path.includes('/management/') ||
+            path.includes('/property/')
           );
         } catch (e) {
           // Invalid URL, skip it

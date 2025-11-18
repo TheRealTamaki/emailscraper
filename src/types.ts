@@ -56,7 +56,7 @@ export interface ScrapingOptions {
   // Firecrawl options
   firecrawlOptions?: {
     onlyMainContent?: boolean;   // Extract only main content (default: true)
-    formats?: string[];          // Formats to extract (default: ['markdown'])
+    formats?: ('markdown' | 'html' | 'rawHtml' | 'content' | 'links' | 'screenshot' | 'screenshot@fullPage' | 'extract' | 'json' | 'changeTracking')[];  // Formats to extract (default: ['markdown'])
     timeout?: number;            // Request timeout in milliseconds
   };
 
